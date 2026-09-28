@@ -1,48 +1,65 @@
-
 import os
 import requests as http_requests
 from flask import Flask, render_template, session, redirect, url_for
-from flask_bootstrap import Bootstrap
 from flask_moment import Moment
 from flask_wtf import FlaskForm
-from wtforms import StringField, SubmitField
+from wtforms import StringField, SubmitField, BooleanField
 from wtforms.validators import DataRequired
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
-
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'hard to guess string'
-app.config['SQLALCHEMY_DATABASE_URI'] =\
+app.config['SQLALCHEMY_DATABASE_URI'] = \
     'sqlite:///' + os.path.join(basedir, 'data.sqlite')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-bootstrap = Bootstrap(app)
 moment = Moment(app)
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
-def enviar_email(nome_usuario):
-    """Envia e-mail via SendGrid API para o professor e para o aluno."""
+# ---------------- Configuração de e-mail (SendGrid) ----------------
+# NUNCA coloque a chave direto no código. Defina a variável de ambiente
+# SENDGRID_API_KEY (no PythonAnywhere: no arquivo WSGI ou em um .env).
+SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY', '')
+
+# Precisa ser exatamente o e-mail verificado (Single Sender) no SendGrid
+EMAIL_REMETENTE = 'moura.rodrigues@aluno.ifsp.edu.br'
+
+# Sempre recebe o e-mail (endereço institucional)
+EMAIL_INSTITUCIONAL = 'moura.rodrigues@aluno.ifsp.edu.br'
+
+# Só recebe se o checkbox for marcado
+EMAIL_PROFESSOR = 'flaskaulasweb@zohomail.com'
+
+PRONTUARIO = 'PT3037673'
+NOME_ALUNO = 'Lucas Rodrigues de Moura'
+
+
+def enviar_email(nome_usuario, enviar_para_professor):
+    """Envia e-mail via SendGrid. Retorna True se aceito (status 202)."""
+    if not SENDGRID_API_KEY:
+        print('ERRO: variável de ambiente SENDGRID_API_KEY não definida.')
+        return False
+
+    destinatarios = [EMAIL_INSTITUCIONAL]
+    if enviar_para_professor:
+        destinatarios.append(EMAIL_PROFESSOR)
+
     try:
         response = http_requests.post(
             'https://api.sendgrid.com/v3/mail/send',
             headers={
                 'Authorization': f'Bearer {SENDGRID_API_KEY}',
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
             },
             json={
                 'personalizations': [
-                    {
-                        'to': [{'email': email} for email in EMAIL_DESTINATARIOS]
-                    }
+                    {'to': [{'email': e} for e in destinatarios]}
                 ],
-                'from': {
-                    'email': EMAIL_REMETENTE,
-                    'name': 'Flasky App'
-                },
+                'from': {'email': EMAIL_REMETENTE, 'name': 'Flasky App'},
                 'subject': f'Novo usuário cadastrado - {nome_usuario}',
                 'content': [
                     {
@@ -53,30 +70,17 @@ def enviar_email(nome_usuario):
                             <p><strong>Nome do aluno:</strong> {NOME_ALUNO}</p>
                             <hr>
                             <p><strong>Usuário cadastrado:</strong> {nome_usuario}</p>
-                        '''
+                        ''',
                     }
-                ]
-            }
+                ],
+            },
+            timeout=15,
         )
-        print(f'E-mail enviado! Status: {response.status_code} - {response.text}')
+        print(f'SendGrid -> {response.status_code}: {response.text}')
         return response.status_code == 202
     except Exception as e:
         print(f'Erro ao enviar e-mail: {e}')
         return False
-
-
-SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY', 'COLE_SUA_CHAVE_AQUI')
-
-# E-mail verificado no SendGrid (Single Sender)
-EMAIL_REMETENTE = 'moura.rodrigues@aluno.ifsp.edu.br'
-
-EMAIL_DESTINATARIOS = [
-    'flaskaulasweb@zohomail.com',
-    'moura.rodrigues@aluno.ifsp.edu.br'
-]
-
-PRONTUARIO = 'PT3037673'
-NOME_ALUNO ='LucasRodrigues de moura'
 
 
 class Role(db.Model):
@@ -100,7 +104,8 @@ class User(db.Model):
 
 
 class NameForm(FlaskForm):
-    name = StringField('What is your name?', validators=[DataRequired()])
+    name = StringField('Qual é o seu nome?', validators=[DataRequired()])
+    enviar_professor = BooleanField(f'Deseja enviar e-mail para {EMAIL_PROFESSOR}?')
     submit = SubmitField('Submit')
 
 
@@ -124,39 +129,29 @@ def index():
     form = NameForm()
 
     if form.validate_on_submit():
-
-
         user = User.query.filter_by(username=form.name.data).first()
 
         if user is None:
-
-
             role = Role.query.filter_by(name='User').first()
-
-
             if role is None:
                 role = Role(name='User')
                 db.session.add(role)
                 db.session.commit()
 
-
-            user = User(
-                username=form.name.data,
-                role=role
-            )
-
+            user = User(username=form.name.data, role=role)
             db.session.add(user)
             db.session.commit()
 
             session['known'] = False
-
+            # Novo usuário: dispara o e-mail
+            session['email_enviado'] = enviar_email(
+                user.username, form.enviar_professor.data
+            )
         else:
             session['known'] = True
 
         session['name'] = form.name.data
-
         return redirect(url_for('index'))
-
 
     users = User.query.all()
 
@@ -165,5 +160,7 @@ def index():
         form=form,
         name=session.get('name'),
         known=session.get('known', False),
-        users=users
+        # pop: a mensagem aparece só uma vez, logo após o cadastro
+        email_enviado=session.pop('email_enviado', None),
+        users=users,
     )
