@@ -20,18 +20,14 @@ moment = Moment(app)
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 
-# ---------------- Configuração de e-mail (SendGrid) ----------------
-# NUNCA coloque a chave direto no código. Defina a variável de ambiente
-# SENDGRID_API_KEY (no PythonAnywhere: no arquivo WSGI ou em um .env).
 SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY', '')
 
-# Precisa ser exatamente o e-mail verificado (Single Sender) no SendGrid
 EMAIL_REMETENTE = 'moura.rodrigues@aluno.ifsp.edu.br'
 
-# Sempre recebe o e-mail (endereço institucional)
+
 EMAIL_INSTITUCIONAL = 'moura.rodrigues@aluno.ifsp.edu.br'
 
-# Só recebe se o checkbox for marcado
+
 EMAIL_PROFESSOR = 'flaskaulasweb@zohomail.com'
 
 PRONTUARIO = 'PT3037673'
